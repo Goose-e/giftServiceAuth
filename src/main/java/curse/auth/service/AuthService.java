@@ -5,6 +5,8 @@ import curse.auth.dto.auth.LoginRequest;
 import curse.auth.dto.auth.RegisterRequest;
 import curse.auth.dto.jwt.RefreshRequestDTO;
 import curse.auth.dto.jwt.RefreshResponseDTO;
+import curse.auth.httpResponse.DefaultHttpResponseBody;
+import curse.auth.httpResponse.HttpResponseBody;
 import curse.auth.jwt.jwt.IJwtService;
 import curse.auth.models.User;
 import curse.auth.repository.UserRepository;
@@ -17,15 +19,18 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+import static curse.auth.constants.SysConst.OC_OK;
+
 @Service
 @RequiredArgsConstructor
-public class AuthService {
+public class AuthService implements IAuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final IJwtService jwtService;
 
-    public AuthResponse register(RegisterRequest request) {
+    @Override
+    public HttpResponseBody<AuthResponse> register(RegisterRequest request) {
         if (userRepository.existsByLogin(request.getLogin())) {
             throw new IllegalArgumentException("Login already exists");
         }
@@ -38,7 +43,7 @@ public class AuthService {
         User saved = userRepository.save(user);
         List<OAuth2AccessToken> tokens = jwtService.createTokens(saved.getUserId(), saved.getLogin());
 
-        return new AuthResponse(
+        AuthResponse responseDto = new AuthResponse(
                 saved.getUserId(),
                 saved.getUsername(),
                 saved.getLogin(),
@@ -48,9 +53,16 @@ public class AuthService {
                 tokens.getLast().getExpiresAt().getEpochSecond() - tokens.getLast().getIssuedAt().getEpochSecond(),
                 "Bearer"
         );
+
+        DefaultHttpResponseBody<AuthResponse> response = new DefaultHttpResponseBody<>();
+        response.setResponseCode(OC_OK);
+        response.setMessage("Success");
+        response.setResponseEntity(responseDto);
+        return response;
     }
 
-    public AuthResponse login(LoginRequest request) {
+    @Override
+    public HttpResponseBody<AuthResponse> login(LoginRequest request) {
         authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getLogin(), request.getPassword())
         );
@@ -60,7 +72,7 @@ public class AuthService {
 
         List<OAuth2AccessToken> tokens = jwtService.createTokens(user.getUserId(), user.getLogin());
 
-        return new AuthResponse(
+        AuthResponse responseDto = new AuthResponse(
                 user.getUserId(),
                 user.getUsername(),
                 user.getLogin(),
@@ -70,9 +82,16 @@ public class AuthService {
                 tokens.getLast().getExpiresAt().getEpochSecond() - tokens.getLast().getIssuedAt().getEpochSecond(),
                 "Bearer"
         );
+
+        DefaultHttpResponseBody<AuthResponse> response = new DefaultHttpResponseBody<>();
+        response.setResponseCode(OC_OK);
+        response.setMessage("Success");
+        response.setResponseEntity(responseDto);
+        return response;
     }
 
-    public RefreshResponseDTO refresh(RefreshRequestDTO requestDTO) {
+    @Override
+    public HttpResponseBody<RefreshResponseDTO> refresh(RefreshRequestDTO requestDTO) {
         return jwtService.refreshToken(requestDTO);
     }
 }

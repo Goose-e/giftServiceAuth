@@ -2,6 +2,8 @@ package curse.auth.jwt.jwt;
 
 import curse.auth.dto.jwt.RefreshRequestDTO;
 import curse.auth.dto.jwt.RefreshResponseDTO;
+import curse.auth.dto.jwt.RefreshResponse;
+import curse.auth.httpResponse.HttpResponseBody;
 import curse.auth.mapper.JwtMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -82,7 +84,7 @@ public class TokenService implements IJwtService {
     }
 
     @Override
-    public RefreshResponseDTO refreshToken(RefreshRequestDTO refreshRequestDTO) {
+    public HttpResponseBody<RefreshResponseDTO> refreshToken(RefreshRequestDTO refreshRequestDTO) {
         Jwt jwt = jwtDecoder.decode(refreshRequestDTO.getRefreshToken());
         if (!isRefreshTokenValid(jwt)) {
             throw new JwtException("Invalid refresh token");
@@ -91,6 +93,10 @@ public class TokenService implements IJwtService {
         Long userId = jwt.getClaim("userId");
         String login = jwt.getSubject();
         List<OAuth2AccessToken> newTokens = generateNewAccessToken(userId, login);
-        return jwtMapper.mapNewAccessTokenToRefreshResponseDTO(newTokens);
+        RefreshResponse response = new RefreshResponse();
+        response.setResponseCode("OC_OK");
+        response.setMessage("Success");
+        response.setResponseEntity(jwtMapper.mapNewAccessTokenToRefreshResponseDTO(newTokens));
+        return response;
     }
 }
