@@ -1,12 +1,12 @@
 package curse.auth.config;
 
-
 import com.nimbusds.jose.jwk.JWKSet;
 import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 import curse.auth.jwt.CustomJwtAuthenticationConverter;
 import curse.auth.jwt.security.CustomAuthenticationEntryPoint;
+import curse.auth.service.AppUserDetailsService;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,34 +19,22 @@ import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.annotation.web.configurers.LogoutConfigurer;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.config.annotation.web.configuration.OAuth2AuthorizationServerConfiguration;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.core.AuthorizationGrantType;
-import org.springframework.security.oauth2.core.oidc.OidcScopes;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
-import org.springframework.security.oauth2.server.authorization.client.InMemoryRegisteredClientRepository;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
-import org.springframework.security.oauth2.server.authorization.client.RegisteredClientRepository;
-
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
-import java.util.UUID;
 
 import static curse.auth.jwt.security.KeyLoader.loadPrivateKey;
 import static curse.auth.jwt.security.KeyLoader.loadPublicKey;
-
 
 @Slf4j
 @Configuration
@@ -59,37 +47,18 @@ public class WebSecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, CustomAuthenticationEntryPoint entryPoint) throws Exception {
-
         http
                 .cors(Customizer.withDefaults())
-                .exceptionHandling(exceptionHandling ->
-                        exceptionHandling
-                                .authenticationEntryPoint(entryPoint)
-                )
-                .authorizeHttpRequests
-                        ((requests) -> requests
-                                .requestMatchers("/water/**").permitAll()
-                                .requestMatchers("/weather/**").permitAll()
-                                .requestMatchers("/review/check").permitAll()
-                                .requestMatchers("/", "/home").permitAll()
-                                .requestMatchers("/auth/*").permitAll()
-                                .requestMatchers("/auth/login").permitAll()
-                                .requestMatchers("/user/find_by_username").permitAll()
-                                .requestMatchers("/user/*").authenticated()
-                                .requestMatchers("/company/get_all").permitAll()
-                                .requestMatchers("/company/find_by_name").permitAll()
-                                .requestMatchers("/company/get_by_code").permitAll()
-                                .requestMatchers("/company/*").authenticated()
-                                .requestMatchers("/review/*").authenticated()
-                                .requestMatchers("/.well-known/**", "/oauth2/**").permitAll()
-                                .anyRequest().authenticated()
-
-                        ).oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt
-                                .jwtAuthenticationConverter(new CustomJwtAuthenticationConverter())
-                        ).authenticationEntryPoint(entryPoint)
-                )
-                .logout(LogoutConfigurer::permitAll).csrf(AbstractHttpConfigurer::disable);
+                .exceptionHandling(exceptionHandling -> exceptionHandling.authenticationEntryPoint(entryPoint))
+                .authorizeHttpRequests(requests -> requests
+                        .requestMatchers("/auth/register", "/auth/login", "/auth/refresh").permitAll()
+                        .requestMatchers("/.well-known/**", "/oauth2/**").permitAll()
+                        .anyRequest().authenticated())
+                .oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(new CustomJwtAuthenticationConverter()))
+                        .authenticationEntryPoint(entryPoint))
+                .logout(LogoutConfigurer::permitAll)
+                .csrf(AbstractHttpConfigurer::disable);
         return http.build();
     }
 
@@ -99,21 +68,8 @@ public class WebSecurityConfig {
     }
 
     @Bean
-    public JwtDecoder jwtDecoder(JWKSource<SecurityContext> jwkSource) {
-        return OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
-    }
-
-    @Bean
-    public UserDetailsService userDetailsService(PasswordEncoder encoder) {
-        UserDetails user = User.withUsername("user")
-                .password(encoder.encode("password"))
-                .roles("USER")
-                .build();
-        return new InMemoryUserDetailsManager(user);
-    }
-
-    @Bean
-    public AuthenticationManager authenticationManager(HttpSecurity http, PasswordEncoder passwordEncoder, UserDetailsService userDetailsService) throws Exception {
+    public AuthenticationManager authenticationManager(PasswordEncoder passwordEncoder,
+                                                       AppUserDetailsService userDetailsService) {
         DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
         provider.setUserDetailsService(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder);
@@ -121,25 +77,13 @@ public class WebSecurityConfig {
     }
 
     @Bean
-    public RegisteredClientRepository registeredClientRepository() {
-        RegisteredClient registeredClient = RegisteredClient.withId(UUID.randomUUID().toString())
-                .clientId("client")
-                .clientSecret("{noop}secret")
-                .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
-                .authorizationGrantType(AuthorizationGrantType.REFRESH_TOKEN)
-                .authorizationGrantType(AuthorizationGrantType.CLIENT_CREDENTIALS)
-                .redirectUri("http://localhost:8080/login/oauth2/code/custom")
-                .scope(OidcScopes.OPENID)
-                .scope("read")
-                .build();
-
-
-        return new InMemoryRegisteredClientRepository(registeredClient);
+    public JwtDecoder jwtDecoder(JWKSource<SecurityContext> jwkSource) {
+        return OAuth2AuthorizationServerConfiguration.jwtDecoder(jwkSource);
     }
 
     @Bean
     public JWKSource<SecurityContext> jwkSource() throws Exception {
-        logger.error("Using jwkSource() with hardcoded keys");
+        logger.warn("Using static RSA keys from configuration class");
 
         RSAPublicKey publicKey = loadPublicKey("-----BEGIN PUBLIC KEY-----\n" +
                 "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA83ER2xKBgPqzbsA44CML\n" +
@@ -179,7 +123,6 @@ public class WebSecurityConfig {
                 "SJfVzsUI4mmUP5SfZH1izDE5\n" +
                 "-----END PRIVATE KEY-----");
 
-
         RSAKey rsaKey = new RSAKey.Builder(publicKey)
                 .privateKey(privateKey)
                 .keyID(secretKey)
@@ -196,7 +139,6 @@ public class WebSecurityConfig {
 
     @Bean
     public AuthorizationServerSettings authorizationServerSettings() {
-        return AuthorizationServerSettings.builder().issuer("http://localhost:9000")
-                .build();
+        return AuthorizationServerSettings.builder().issuer("http://localhost:9000").build();
     }
 }

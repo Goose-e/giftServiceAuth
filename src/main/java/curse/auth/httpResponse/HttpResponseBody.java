@@ -1,6 +1,5 @@
 package curse.auth.httpResponse;
 
-import com.example.companyReputationManagement.constants.SysConst;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.springframework.http.MediaType;
 
@@ -8,12 +7,16 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
+import static curse.auth.constants.SysConst.INVALID_ENTITY_ATTR;
+import static curse.auth.constants.SysConst.OC_OK;
+import static curse.auth.constants.SysConst.STRING_NULL;
+
 public abstract class HttpResponseBody<T extends ResponseDto> implements Serializable {
 
     private final String requestId;
     private String responseCode;
     private String message;
-    private String error = SysConst.STRING_NULL;
+    private String error = STRING_NULL;
     private T responseEntity;
     private final List<ErrorInfo> errors = new ArrayList<>();
 
@@ -24,11 +27,9 @@ public abstract class HttpResponseBody<T extends ResponseDto> implements Seriali
         this.requestId = requestId;
     }
 
-    //==================================================================================================================
-
     @JsonIgnore
     public boolean haveErrors() {
-        return (!responseCode.equalsIgnoreCase(SysConst.OC_OK)) || !errors.isEmpty();
+        return (!OC_OK.equalsIgnoreCase(responseCode)) || !errors.isEmpty();
     }
 
     @JsonIgnore
@@ -56,7 +57,7 @@ public abstract class HttpResponseBody<T extends ResponseDto> implements Seriali
 
         if (responseCode == null || responseCode.isEmpty()) {
             responseCode = errorCode;
-        } else if (SysConst.OC_OK.equals(responseCode)) {
+        } else if (OC_OK.equals(responseCode)) {
             responseCode = errorCode;
             message = errorMsg;
         }
@@ -73,7 +74,7 @@ public abstract class HttpResponseBody<T extends ResponseDto> implements Seriali
     public void assignErrors(List<ErrorInfo> errors) {
         this.errors.addAll(errors);
         if (!errors.isEmpty()) {
-            responseCode = SysConst.INVALID_ENTITY_ATTR;
+            responseCode = INVALID_ENTITY_ATTR;
             if (message == null || message.isEmpty()) {
                 message = errors.stream().findFirst().orElseThrow().getErrorMsg().toUpperCase();
             }
@@ -81,11 +82,9 @@ public abstract class HttpResponseBody<T extends ResponseDto> implements Seriali
         }
     }
 
-    public String toString2() {
-        return "code='" + responseCode + "', message='" + message + "', error='" + error + "', errors=" + errors +
-                ", " + this.getClass().getSimpleName() + "(" + responseEntity + ")";
+    public String getRequestId() {
+        return requestId;
     }
-
 
     public String getResponseCode() {
         return responseCode;
