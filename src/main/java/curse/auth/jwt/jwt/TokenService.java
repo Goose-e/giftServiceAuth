@@ -1,12 +1,9 @@
 package curse.auth.jwt.jwt;
 
-
 import curse.auth.dto.jwt.RefreshRequestDTO;
-import curse.auth.dto.jwt.RefreshResponse;
 import curse.auth.dto.jwt.RefreshResponseDTO;
-import curse.auth.httpResponse.HttpResponseBody;
 import curse.auth.mapper.JwtMapper;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.OAuth2AccessToken;
@@ -17,15 +14,10 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-import static curse.auth.constants.SysConst.OC_BUGS;
-import static curse.auth.constants.SysConst.OC_OK;
-
-
-@AllArgsConstructor
+@RequiredArgsConstructor
 @Service
 public class TokenService implements IJwtService {
     private final JwtEncoder jwtEncoder;
-    private final UserDao userDao;
     private final JwtDecoder jwtDecoder;
     private final JwtMapper jwtMapper;
 
@@ -33,14 +25,16 @@ public class TokenService implements IJwtService {
         try {
             Instant expiresAt = jwt.getExpiresAt();
             String tokenType = jwt.getClaim("tokenType");
-            if (!"refresh".equals(tokenType)) return false;
-            assert expiresAt != null;
-            return !expiresAt.isBefore(Instant.now());
+            if (!"refresh".equals(tokenType)) {
+                return false;
+            }
+            return expiresAt != null && !expiresAt.isBefore(Instant.now());
         } catch (Exception e) {
             return false;
         }
     }
 
+    @Override
     public String extractUserCodeFromJwt() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof Jwt jwt)) {
@@ -49,74 +43,54 @@ public class TokenService implements IJwtService {
         return jwt.getClaim("userCode");
     }
 
-    public List<OAuth2AccessToken> createTokens(String userCode, String username ) {
-
-        return generateNewAccessToken(userCode, username);
+    @Override
+    public List<OAuth2AccessToken> createTokens(Long userId, String login) {
+        return generateNewAccessToken(userId, login);
     }
 
-    private List<OAuth2AccessToken> generateNewAccessToken(String userCode, String username) {
+    private List<OAuth2AccessToken> generateNewAccessToken(Long userId, String login) {
         Instant now = Instant.now();
-        Instant accessTokenExpiresAt = now.plusSeconds(3600); // Access Token expires in 1 hour
-        Instant refreshTokenExpiresAt = now.plusSeconds(86400); // Refresh Token expires in 1 day
+        Instant accessTokenExpiresAt = now.plusSeconds(3600);
+        Instant refreshTokenExpiresAt = now.plusSeconds(86400);
 
         JwtClaimsSet accessTokenClaims = JwtClaimsSet.builder()
                 .issuer("http://localhost:9000")
                 .issuedAt(now)
                 .expiresAt(accessTokenExpiresAt)
-                .subject(username)
-                .claim("userCode", userCode)
+                .subject(login)
+                .claim("userCode", login)
+                .claim("userId", userId)
                 .claim("tokenType", "access")
                 .build();
         String accessToken = jwtEncoder.encode(JwtEncoderParameters.from(accessTokenClaims)).getTokenValue();
-
 
         JwtClaimsSet refreshTokenClaims = JwtClaimsSet.builder()
                 .issuer("http://localhost:9000")
                 .issuedAt(now)
                 .expiresAt(refreshTokenExpiresAt)
-                .subject(username)
-                .claim("userCode", userCode)
+                .subject(login)
+                .claim("userCode", login)
+                .claim("userId", userId)
                 .claim("tokenType", "refresh")
                 .build();
         String newRefreshToken = jwtEncoder.encode(JwtEncoderParameters.from(refreshTokenClaims)).getTokenValue();
-        final List<OAuth2AccessToken> accessTokens = new ArrayList<>();
-        accessTokens.add(new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, accessToken, now, accessTokenExpiresAt));
-        accessTokens.add(new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, newRefreshToken, now, refreshTokenExpiresAt));
 
-        return accessTokens;
+        final List<OAuth2AccessToken> tokens = new ArrayList<>();
+        tokens.add(new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, accessToken, now, accessTokenExpiresAt));
+        tokens.add(new OAuth2AccessToken(OAuth2AccessToken.TokenType.BEARER, newRefreshToken, now, refreshTokenExpiresAt));
+        return tokens;
     }
 
-    public HttpResponseBody<RefreshResponseDTO> refreshToken(RefreshRequestDTO refreshRequestDTO) {
-        HttpResponseBody<RefreshResponseDTO> response = new RefreshResponse();
-        try {
-            Jwt jwt = jwtDecoder.decode(refreshRequestDTO.getRefreshToken());
-            if (!isRefreshTokenValid(jwt)) {
-                response.setMessage("Invalid refresh token");
-
-            } else {
-                String username = jwt.getClaim("userCode");
-                CompanyUser user = userDao.findUserByUserCode(username);
-                List<OAuth2AccessToken> newAccessToken = generateNewAccessToken(user.getUserCode(), user.getUsername(), user.getRoleRefId());
-                response.setMessage("Successfully refreshed token");
-
-                response.setResponseEntity(jwtMapper.mapNewAccessTokenToRefreshResponseDTO(newAccessToken));
-            }
-            if (response.getErrors().isEmpty()) {
-                response.setResponseCode(OC_OK);
-            } else {
-                response.setResponseCode(OC_BUGS);
-            }
-
-        } catch (JwtException e) {
-            response.setMessage("Decode error");
-            response.setError("JWT decode error");
-            response.setResponseCode(OC_BUGS);
-
-        } catch (Exception e) {
-            response.setMessage("Unexpected error");
-            response.setError("Unexpected error: " + e.getMessage());
-            response.setResponseCode(OC_BUGS);
+    @Override
+    public RefreshResponseDTO refreshToken(RefreshRequestDTO refreshRequestDTO) {
+        Jwt jwt = jwtDecoder.decode(refreshRequestDTO.getRefreshToken());
+        if (!isRefreshTokenValid(jwt)) {
+            throw new JwtException("Invalid refresh token");
         }
-        return response;
+
+        Long userId = jwt.getClaim("userId");
+        String login = jwt.getSubject();
+        List<OAuth2AccessToken> newTokens = generateNewAccessToken(userId, login);
+        return jwtMapper.mapNewAccessTokenToRefreshResponseDTO(newTokens);
     }
 }
