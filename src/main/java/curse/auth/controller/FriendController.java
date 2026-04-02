@@ -1,40 +1,37 @@
 package curse.auth.controller;
 
+import curse.auth.dto.common.EmptyResponseDTO;
 import curse.auth.dto.friend.FriendActionRequest;
-import curse.auth.dto.friend.FriendDto;
-import curse.auth.service.FriendService;
+import curse.auth.dto.friend.FriendListResponseDTO;
+import curse.auth.httpResponse.HttpResponseBody;
+import curse.auth.service.IFriendService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/friends")
 @RequiredArgsConstructor
 public class FriendController {
-    private final FriendService friendService;
+    private final IFriendService friendService;
 
     @PostMapping("/add")
-    public ResponseEntity<Void> addFriend(Authentication authentication, @RequestBody FriendActionRequest request) {
-        friendService.addFriend(authentication.getName(), request.getFriendLogin());
-        return ResponseEntity.ok().build();
+    public HttpResponseBody<EmptyResponseDTO> addFriend(Authentication authentication, @RequestBody FriendActionRequest request) {
+        return friendService.addFriend(authentication.getName(), request);
     }
 
     @DeleteMapping("/remove")
-    public ResponseEntity<Void> removeFriend(Authentication authentication, @RequestBody FriendActionRequest request) {
-        friendService.removeFriend(authentication.getName(), request.getFriendLogin());
-        return ResponseEntity.noContent().build();
+    public HttpResponseBody<EmptyResponseDTO> removeFriend(Authentication authentication, @RequestBody FriendActionRequest request) {
+        return friendService.removeFriend(authentication.getName(), request);
     }
 
     @GetMapping
-    public ResponseEntity<List<FriendDto>> getFriends(Authentication authentication) {
-        return ResponseEntity.ok(friendService.getFriends(authentication.getName()));
+    public HttpResponseBody<FriendListResponseDTO> getFriends(Authentication authentication) {
+        return friendService.getFriends(authentication.getName());
     }
 
     @GetMapping("/search")
-    public ResponseEntity<List<FriendDto>> searchUsers(@RequestParam("username") String username) {
-        return ResponseEntity.ok(friendService.searchUsers(username));
+    public HttpResponseBody<FriendListResponseDTO> searchUsers(@RequestParam("username") String username) {
+        return friendService.searchUsers(username);
     }
 }
