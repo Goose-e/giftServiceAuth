@@ -43,6 +43,13 @@ public class FriendService implements IFriendService {
             friendRepository.save(friend);
         }
 
+        if (!friendRepository.existsByUserIdAndFriendUserId(friendUser.getUserId(), currentUser.getUserId())) {
+            Friend reverseFriend = new Friend();
+            reverseFriend.setUserId(friendUser.getUserId());
+            reverseFriend.setFriendUserId(currentUser.getUserId());
+            friendRepository.save(reverseFriend);
+        }
+
         DefaultHttpResponseBody<EmptyResponseDTO> response = new DefaultHttpResponseBody<>();
         response.setResponseCode(OC_OK);
         response.setMessage("Success");
@@ -59,6 +66,7 @@ public class FriendService implements IFriendService {
                 .orElseThrow(() -> new IllegalArgumentException("Friend user not found"));
 
         friendRepository.deleteByUserIdAndFriendUserId(currentUser.getUserId(), friendUser.getUserId());
+        friendRepository.deleteByUserIdAndFriendUserId(friendUser.getUserId(), currentUser.getUserId());
 
         DefaultHttpResponseBody<EmptyResponseDTO> response = new DefaultHttpResponseBody<>();
         response.setResponseCode(OC_OK);
