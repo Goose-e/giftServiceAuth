@@ -6,5 +6,5 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface GiftRepository extends JpaRepository<Gift, Long> {
-    List<Gift> findByTagIdIn(List<Long> tagIds);
+    List<Gift> findByTag_TagIdIn(List<Long> tagIds);
 }

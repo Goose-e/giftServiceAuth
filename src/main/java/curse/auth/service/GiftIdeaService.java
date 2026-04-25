@@ -1,5 +1,7 @@
 package curse.auth.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import curse.auth.dto.common.EmptyResponseDTO;
 import curse.auth.dto.gift.CreateGiftRequest;
 import curse.auth.dto.gift.GiftDto;
@@ -30,6 +32,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -80,7 +86,7 @@ public class GiftIdeaService implements IGiftIdeaService {
         Gift gift = new Gift();
         gift.setGiftName(request.getGiftName().trim());
         gift.setGiftAvgPrice(request.getGiftAvgPrice());
-        gift.setTagId(tag.getTagId());
+        gift.setTag(tag);
         giftRepository.save(gift);
 
         return listGifts();
@@ -153,13 +159,13 @@ public class GiftIdeaService implements IGiftIdeaService {
         List<RecommendationDto> recommendations = giftRepository.findAll().stream()
                 .filter(g -> !existingWishlistGiftIds.contains(g.getGiftId()))
                 .sorted(Comparator.comparing(
-                        (Gift g) -> weightMap.getOrDefault(g.getTagId(), BigDecimal.ZERO)).reversed())
+                        (Gift g) -> weightMap.getOrDefault(g.getTag().getTagId(), BigDecimal.ZERO)).reversed())
                 .limit(10)
                 .map(g -> new RecommendationDto(
                         g.getGiftId(),
                         g.getGiftName(),
-                        buildFriendReason(g.getTagId(), weightMap.getOrDefault(g.getTagId(), BigDecimal.ZERO)),
-                        resolveTagName(g.getTagId()),
+                        buildFriendReason(g.getTag().getTagId(), weightMap.getOrDefault(g.getTag().getTagId(), BigDecimal.ZERO)),
+                        resolveTagName(g.getTag().getTagId()),
                         g.getGiftAvgPrice()))
                 .toList();
 
@@ -209,13 +215,13 @@ public class GiftIdeaService implements IGiftIdeaService {
         Set<Long> tagIds = tags.stream().map(Tag::getTagId).collect(HashSet::new, Set::add, Set::addAll);
 
         List<RecommendationDto> recommendations = giftRepository.findAll().stream()
-                .filter(gift -> tagIds.contains(gift.getTagId()))
+                .filter(gift -> tagIds.contains(gift.getTag().getTagId()))
                 .limit(10)
                 .map(g -> new RecommendationDto(
                         g.getGiftId(),
                         g.getGiftName(),
                         "AI-анализ анкеты выбрал теги: " + String.join(", ", aiTags),
-                        resolveTagName(g.getTagId()),
+                        resolveTagName(g.getTag().getTagId()),
                         g.getGiftAvgPrice()
                 ))
                 .toList();
@@ -227,13 +233,61 @@ public class GiftIdeaService implements IGiftIdeaService {
                             g.getGiftId(),
                             g.getGiftName(),
                             "Недостаточно совпадений по анкете, показаны универсальные варианты",
-                            resolveTagName(g.getTagId()),
+                            resolveTagName(g.getTag().getTagId()),
                             g.getGiftAvgPrice()
                     ))
                     .toList();
         }
 
         return ok(new RecommendationResponseDTO(recommendations));
+    }
+
+    public void importFromApi() {
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://dummyjson.com/products"))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode root = mapper.readTree(response.body());
+
+            for (JsonNode product : root.get("products")) {
+
+                String name = product.get("title").asText();
+                Long price = product.get("price").asLong();
+
+                String tagName = product.get("category").asText();
+
+
+                Tag tag = tagRepository.findByTagNameIgnoreCase(tagName)
+                        .orElseGet(() -> {
+                            Tag newTag = new Tag();
+                            newTag.setTagName(tagName);
+                            return tagRepository.save(newTag);
+                        });
+
+                // проверка чтобы не было дублей
+                boolean exists = giftRepository.findAll().stream()
+                        .anyMatch(g -> g.getGiftName().equalsIgnoreCase(name));
+
+                if (exists) continue;
+
+                Gift gift = new Gift();
+                gift.setGiftName(name);
+                gift.setGiftAvgPrice(price);
+                gift.setTag(tag);
+
+                giftRepository.save(gift);
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void ensureFriendRelation(Long userId, Long friendUserId) {
@@ -253,7 +307,7 @@ public class GiftIdeaService implements IGiftIdeaService {
     }
 
     private GiftDto mapGiftDto(Gift gift) {
-        return new GiftDto(gift.getGiftId(), gift.getGiftName(), gift.getGiftAvgPrice(), resolveTagName(gift.getTagId()));
+        return new GiftDto(gift.getGiftId(), gift.getGiftName(), gift.getGiftAvgPrice(), resolveTagName(gift.getTag().getTagId()));
     }
 
     private String resolveTagName(Long tagId) {
@@ -295,7 +349,7 @@ public class GiftIdeaService implements IGiftIdeaService {
             if (gift == null) {
                 continue;
             }
-            countsByTag.merge(gift.getTagId(), 1L, Long::sum);
+            countsByTag.merge(gift.getTag().getTagId(), 1L, Long::sum);
         }
 
         for (Map.Entry<Long, Long> entry : countsByTag.entrySet()) {

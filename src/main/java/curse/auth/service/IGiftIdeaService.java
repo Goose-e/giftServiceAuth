@@ -29,4 +29,6 @@ public interface IGiftIdeaService {
     HttpResponseBody<VictimListResponseDTO> getMyVictims(String currentLogin);
 
     HttpResponseBody<RecommendationResponseDTO> getVictimGiftIdeas(String currentLogin, Long victimId);
+
+     void importFromApi();
 }

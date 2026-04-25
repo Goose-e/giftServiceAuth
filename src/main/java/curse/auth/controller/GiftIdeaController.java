@@ -51,7 +51,11 @@ public class GiftIdeaController {
                                                                 @PathVariable String friendLogin) {
         return giftIdeaService.getFriendWishlist(authentication.getName(), friendLogin);
     }
-
+    @GetMapping("/import")
+    public String importData() {
+        giftIdeaService.importFromApi();
+        return "ok";
+    }
     @GetMapping("/recommendations/friend/{friendLogin}")
     public HttpResponseBody<RecommendationResponseDTO> friendRecommendations(Authentication authentication,
                                                                              @PathVariable String friendLogin) {
