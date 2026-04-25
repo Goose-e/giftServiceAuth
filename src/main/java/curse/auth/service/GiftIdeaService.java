@@ -171,8 +171,8 @@ public class GiftIdeaService implements IGiftIdeaService {
         victimRepository.save(victim);
 
         OllamaGiftResponse aiResponse = ollamaService.analyzeVictim(victim);
-
-        victim.setTagsAnswer(String.join(", ", aiResponse.getTags()));
+        List<String> aiTags = normalizeTags(aiResponse.getTags());
+        victim.setTagsAnswer(String.join(", ", aiTags));
         victimRepository.save(victim);
 
         return getMyVictims(currentLogin);
@@ -195,44 +195,36 @@ public class GiftIdeaService implements IGiftIdeaService {
         Victim victim = victimRepository.findByVictimIdAndUserId(victimId, currentUser.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Victim profile not found"));
 
-        List<String> aiTags;
-
-        if (victim.getTagsAnswer() != null && !victim.getTagsAnswer().isBlank()) {
-            aiTags = Arrays.stream(victim.getTagsAnswer().split(","))
-                    .map(String::trim)
-                    .filter(tag -> !tag.isBlank())
-                    .toList();
-        } else {
-            OllamaGiftResponse aiResponse = ollamaService.analyzeVictim(victim);
-
-            aiTags = aiResponse.getTags();
-
-            victim.setTagsAnswer(String.join(", ", aiTags));
-            victimRepository.save(victim);
-        }
-
-        List<Tag> tags = aiTags.stream()
-                .map(name -> tagRepository.findByTagNameIgnoreCase(name).orElse(null))
-                .filter(Objects::nonNull)
-                .toList();
-
-        List<Long> tagIds = tags.stream()
-                .map(Tag::getTagId)
-                .toList();
-
-        List<Gift> gifts = tagIds.isEmpty()
+        OllamaGiftResponse aiResponse = ollamaService.analyzeVictim(victim);
+        List<String> aiTags = normalizeTags(aiResponse.getTags());
+        List<OllamaGiftResponse.GiftIdea> aiIdeas = aiResponse.getIdeas() == null
                 ? Collections.emptyList()
-                : giftRepository.findByTag_TagIdIn(tagIds);
+                : aiResponse.getIdeas();
 
-        List<RecommendationDto> recommendations = gifts.stream()
-                .limit(10)
+        victim.setTagsAnswer(String.join(", ", aiTags));
+        victimRepository.save(victim);
+
+        Tag fallbackTag = resolveOrCreateTag(aiTags);
+        String reason = (aiResponse.getReason() == null || aiResponse.getReason().isBlank())
+                ? "Предложение, сформированное ИИ по анкете получателя"
+                : aiResponse.getReason().trim();
+
+        List<RecommendationDto> recommendations = aiIdeas.stream()
+                .filter(Objects::nonNull)
+                .map(OllamaGiftResponse.GiftIdea::getName)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(name -> !name.isBlank())
+                .distinct()
+                .map(name -> upsertGiftFromAi(name, aiIdeas, fallbackTag))
                 .map(g -> new RecommendationDto(
                         g.getGiftId(),
                         g.getGiftName(),
-                        "Рекомендация по сохраненным AI-тегам: " + String.join(", ", aiTags),
-                        g.getTag().getTagName(),
+                        reason,
+                        null,
                         g.getGiftAvgPrice()
                 ))
+                .limit(10)
                 .toList();
 
         if (recommendations.isEmpty()) {
@@ -368,6 +360,52 @@ public class GiftIdeaService implements IGiftIdeaService {
             weight.setTagWeight(BigDecimal.valueOf(entry.getValue()));
             userTagWeightRepository.save(weight);
         }
+    }
+
+    private List<String> normalizeTags(List<String> tags) {
+        if (tags == null) {
+            return Collections.emptyList();
+        }
+        return tags.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(tag -> !tag.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private Tag resolveOrCreateTag(List<String> aiTags) {
+        String tagName = aiTags.isEmpty() ? "ai-suggested" : aiTags.get(0);
+        return tagRepository.findByTagNameIgnoreCase(tagName)
+                .orElseGet(() -> {
+                    Tag tag = new Tag();
+                    tag.setTagName(tagName);
+                    return tagRepository.save(tag);
+                });
+    }
+
+    private Gift upsertGiftFromAi(String giftName, List<OllamaGiftResponse.GiftIdea> aiIdeas, Tag fallbackTag) {
+        Optional<Gift> existingGift = giftRepository.findByGiftNameIgnoreCase(giftName);
+        if (existingGift.isPresent()) {
+            return existingGift.get();
+        }
+
+        Gift gift = new Gift();
+        gift.setGiftName(giftName);
+        gift.setGiftAvgPrice(resolveAiPrice(giftName, aiIdeas));
+        gift.setTag(fallbackTag);
+        return giftRepository.save(gift);
+    }
+
+    private Long resolveAiPrice(String giftName, List<OllamaGiftResponse.GiftIdea> aiIdeas) {
+        return aiIdeas.stream()
+                .filter(Objects::nonNull)
+                .filter(idea -> idea.getName() != null && giftName.equalsIgnoreCase(idea.getName().trim()))
+                .map(OllamaGiftResponse.GiftIdea::getPrice)
+                .filter(Objects::nonNull)
+                .filter(price -> price >= 0)
+                .findFirst()
+                .orElse(0L);
     }
 
     private List<String> inferTagsForVictim(Victim victim) {
