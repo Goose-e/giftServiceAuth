@@ -7,6 +7,7 @@ import curse.auth.dto.gift.CreateGiftRequest;
 import curse.auth.dto.gift.GiftDto;
 import curse.auth.dto.gift.GiftListResponseDTO;
 import curse.auth.dto.gift.WishlistActionRequest;
+import curse.auth.dto.ollama.OllamaGiftResponse;
 import curse.auth.dto.recommendation.RecommendationDto;
 import curse.auth.dto.recommendation.RecommendationResponseDTO;
 import curse.auth.dto.victim.VictimDto;
@@ -14,19 +15,8 @@ import curse.auth.dto.victim.VictimListResponseDTO;
 import curse.auth.dto.victim.VictimRequest;
 import curse.auth.httpResponse.DefaultHttpResponseBody;
 import curse.auth.httpResponse.HttpResponseBody;
-import curse.auth.models.Gift;
-import curse.auth.models.Tag;
-import curse.auth.models.User;
-import curse.auth.models.UserTagWeight;
-import curse.auth.models.Victim;
-import curse.auth.models.WishlistData;
-import curse.auth.repository.FriendRepository;
-import curse.auth.repository.GiftRepository;
-import curse.auth.repository.TagRepository;
-import curse.auth.repository.UserRepository;
-import curse.auth.repository.UserTagWeightRepository;
-import curse.auth.repository.VictimRepository;
-import curse.auth.repository.WishlistDataRepository;
+import curse.auth.models.*;
+import curse.auth.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,15 +29,7 @@ import java.net.http.HttpResponse;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 import static curse.auth.constants.SysConst.OC_OK;
 
@@ -61,6 +43,7 @@ public class GiftIdeaService implements IGiftIdeaService {
     private final WishlistDataRepository wishlistDataRepository;
     private final UserTagWeightRepository userTagWeightRepository;
     private final VictimRepository victimRepository;
+    private final IOllamaService ollamaService;
 
     @Override
     @Transactional(readOnly = true)
@@ -184,11 +167,16 @@ public class GiftIdeaService implements IGiftIdeaService {
         victim.setCountry(request.getCountry());
         victim.setCity(request.getCity());
         victim.setInfo(request.getInfo());
+
+        victimRepository.save(victim);
+
+        OllamaGiftResponse aiResponse = ollamaService.analyzeVictim(victim);
+
+        victim.setTagsAnswer(String.join(", ", aiResponse.getTags()));
         victimRepository.save(victim);
 
         return getMyVictims(currentLogin);
     }
-
     @Override
     @Transactional(readOnly = true)
     public HttpResponseBody<VictimListResponseDTO> getMyVictims(String currentLogin) {
@@ -200,28 +188,49 @@ public class GiftIdeaService implements IGiftIdeaService {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public HttpResponseBody<RecommendationResponseDTO> getVictimGiftIdeas(String currentLogin, Long victimId) {
         User currentUser = getUserByLogin(currentLogin);
+
         Victim victim = victimRepository.findByVictimIdAndUserId(victimId, currentUser.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Victim profile not found"));
 
-        List<String> aiTags = inferTagsForVictim(victim);
+        List<String> aiTags;
+
+        if (victim.getTagsAnswer() != null && !victim.getTagsAnswer().isBlank()) {
+            aiTags = Arrays.stream(victim.getTagsAnswer().split(","))
+                    .map(String::trim)
+                    .filter(tag -> !tag.isBlank())
+                    .toList();
+        } else {
+            OllamaGiftResponse aiResponse = ollamaService.analyzeVictim(victim);
+
+            aiTags = aiResponse.getTags();
+
+            victim.setTagsAnswer(String.join(", ", aiTags));
+            victimRepository.save(victim);
+        }
+
         List<Tag> tags = aiTags.stream()
                 .map(name -> tagRepository.findByTagNameIgnoreCase(name).orElse(null))
                 .filter(Objects::nonNull)
                 .toList();
 
-        Set<Long> tagIds = tags.stream().map(Tag::getTagId).collect(HashSet::new, Set::add, Set::addAll);
+        List<Long> tagIds = tags.stream()
+                .map(Tag::getTagId)
+                .toList();
 
-        List<RecommendationDto> recommendations = giftRepository.findAll().stream()
-                .filter(gift -> tagIds.contains(gift.getTag().getTagId()))
+        List<Gift> gifts = tagIds.isEmpty()
+                ? Collections.emptyList()
+                : giftRepository.findByTag_TagIdIn(tagIds);
+
+        List<RecommendationDto> recommendations = gifts.stream()
                 .limit(10)
                 .map(g -> new RecommendationDto(
                         g.getGiftId(),
                         g.getGiftName(),
-                        "AI-анализ анкеты выбрал теги: " + String.join(", ", aiTags),
-                        resolveTagName(g.getTag().getTagId()),
+                        "Рекомендация по сохраненным AI-тегам: " + String.join(", ", aiTags),
+                        g.getTag().getTagName(),
                         g.getGiftAvgPrice()
                 ))
                 .toList();
@@ -232,8 +241,8 @@ public class GiftIdeaService implements IGiftIdeaService {
                     .map(g -> new RecommendationDto(
                             g.getGiftId(),
                             g.getGiftName(),
-                            "Недостаточно совпадений по анкете, показаны универсальные варианты",
-                            resolveTagName(g.getTag().getTagId()),
+                            "Совпадений по AI-тегам не найдено. Показаны универсальные варианты",
+                            g.getTag().getTagName(),
                             g.getGiftAvgPrice()
                     ))
                     .toList();
@@ -241,13 +250,12 @@ public class GiftIdeaService implements IGiftIdeaService {
 
         return ok(new RecommendationResponseDTO(recommendations));
     }
-
     public void importFromApi() {
         try {
             HttpClient client = HttpClient.newHttpClient();
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://dummyjson.com/products"))
+                    .uri(URI.create("https://dummyjson.com/products?limit=0"))
                     .GET()
                     .build();
 
