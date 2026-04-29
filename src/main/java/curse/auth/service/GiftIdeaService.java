@@ -266,8 +266,7 @@ public class GiftIdeaService implements IGiftIdeaService {
         saveCachedRecommendations(victim, recommendations);
 
         return ok(new RecommendationResponseDTO(recommendations));
-    }
-    private List<RecommendationDto> buildTagOnlyRecommendations(List<String> aiTags) {
+    }private List<RecommendationDto> buildTagOnlyRecommendations(List<String> aiTags) {
         List<String> tags = aiTags == null || aiTags.isEmpty()
                 ? List.of("music", "books", "tech", "games", "sport")
                 : aiTags;
