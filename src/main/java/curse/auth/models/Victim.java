@@ -40,6 +40,6 @@ public class Victim {
     @Column(name = "info")
     private String info;
 
-    @Column(name = "tags_answer", columnDefinition = "TEXT")
-    private String tagsAnswer;
+    @Column(name = "recommendations_answer", columnDefinition = "TEXT")
+    private String recommendationsAnswer;
 }
