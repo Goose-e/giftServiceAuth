@@ -169,13 +169,13 @@ public class GiftIdeaService implements IGiftIdeaService {
         victim.setCountry(request.getCountry());
         victim.setCity(request.getCity());
         victim.setInfo(request.getInfo());
-
         victim.setRecommendationsAnswer(null);
 
         victimRepository.save(victim);
 
         return getMyVictims(currentLogin);
-    } @Override
+    }
+
     @Transactional(readOnly = true)
     public HttpResponseBody<VictimListResponseDTO> getMyVictims(String currentLogin) {
         User currentUser = getUserByLogin(currentLogin);
@@ -188,21 +188,32 @@ public class GiftIdeaService implements IGiftIdeaService {
     @Override
     @Transactional
     public HttpResponseBody<RecommendationResponseDTO> getVictimGiftIdeas(String currentLogin, Long victimId) {
+
         User currentUser = getUserByLogin(currentLogin);
 
         Victim victim = victimRepository.findByVictimIdAndUserId(victimId, currentUser.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Victim profile not found"));
 
-        List<RecommendationDto> cachedRecommendations = readCachedRecommendations(victim);
-        if (!cachedRecommendations.isEmpty()) {
-            return ok(new RecommendationResponseDTO(cachedRecommendations));
+        String cached = victim.getRecommendationsAnswer();
+
+        if (cached != null && !cached.isBlank()) {
+            try {
+                List<RecommendationDto> cachedRecommendations = objectMapper.readValue(
+                        cached,
+                        new TypeReference<List<RecommendationDto>>() {}
+                );
+
+                return ok(new RecommendationResponseDTO(cachedRecommendations, cached));
+            } catch (Exception e) {
+                return ok(new RecommendationResponseDTO(Collections.emptyList(), cached));
+            }
         }
 
-        OllamaGiftResponse aiResponse;
+
+        OllamaGiftResponse aiResponse = null;
         try {
             aiResponse = ollamaService.analyzeVictim(victim);
-        } catch (Exception e) {
-            aiResponse = null;
+        } catch (Exception ignored) {
         }
 
         List<String> aiTags = normalizeTags(aiResponse == null ? null : aiResponse.getTags());
@@ -223,7 +234,58 @@ public class GiftIdeaService implements IGiftIdeaService {
                         ? "Предложение, сформированное по анкете получателя"
                         : aiResponse.getReason().trim();
 
-        List<RecommendationDto> recommendations = aiIdeas.stream()
+        List<RecommendationDto> recommendations = buildAiGiftRecommendations(aiIdeas, fallbackTag, reason);
+
+        if (recommendations.isEmpty()) {
+            recommendations = findCatalogRecommendationsByTags(aiTags);
+        }
+
+        if (recommendations.isEmpty()) {
+            recommendations = buildUniversalCatalogRecommendations();
+        }
+
+        if (recommendations.isEmpty()) {
+            recommendations = buildTagOnlyRecommendations(aiTags);
+        }
+
+        saveCachedRecommendations(victim, recommendations);
+
+        String recommendationsJson = null;
+
+        try {
+            recommendationsJson = objectMapper.writeValueAsString(recommendations);
+            victim.setRecommendationsAnswer(recommendationsJson);
+            victimRepository.save(victim);
+        } catch (Exception e) {
+            victim.setRecommendationsAnswer(null);
+            victimRepository.save(victim);
+        }
+
+        return ok(new RecommendationResponseDTO(recommendations, recommendationsJson));
+    }
+    private List<RecommendationDto> buildUniversalCatalogRecommendations() {
+        return giftRepository.findAll().stream()
+                .limit(5)
+                .map(g -> new RecommendationDto(
+                        g.getGiftId(),
+                        g.getGiftName(),
+                        "Персональные подарки не найдены. Показаны универсальные варианты из каталога",
+                        g.getTag() == null ? null : g.getTag().getTagName(),
+                        g.getGiftAvgPrice()
+                ))
+                .toList();
+    }
+
+    private List<RecommendationDto> buildAiGiftRecommendations(
+            List<OllamaGiftResponse.GiftIdea> aiIdeas,
+            Tag fallbackTag,
+            String reason
+    ) {
+        if (aiIdeas == null || aiIdeas.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return aiIdeas.stream()
                 .filter(Objects::nonNull)
                 .map(OllamaGiftResponse.GiftIdea::getName)
                 .filter(Objects::nonNull)
@@ -241,34 +303,12 @@ public class GiftIdeaService implements IGiftIdeaService {
                 ))
                 .limit(10)
                 .toList();
+    }
 
-        if (recommendations.isEmpty()) {
-            recommendations = findCatalogRecommendationsByTags(aiTags);
-        }
 
-        if (recommendations.isEmpty()) {
-            recommendations = giftRepository.findAll().stream()
-                    .limit(5)
-                    .map(g -> new RecommendationDto(
-                            g.getGiftId(),
-                            g.getGiftName(),
-                            "Персональные подарки не найдены. Показаны универсальные варианты из каталога",
-                            g.getTag() == null ? null : g.getTag().getTagName(),
-                            g.getGiftAvgPrice()
-                    ))
-                    .toList();
-        }
-
-        if (recommendations.isEmpty()) {
-            recommendations = buildTagOnlyRecommendations(aiTags);
-        }
-
-        saveCachedRecommendations(victim, recommendations);
-
-        return ok(new RecommendationResponseDTO(recommendations));
-    }private List<RecommendationDto> buildTagOnlyRecommendations(List<String> aiTags) {
+    private List<RecommendationDto> buildTagOnlyRecommendations(List<String> aiTags) {
         List<String> tags = aiTags == null || aiTags.isEmpty()
-                ? List.of("music", "books", "tech", "games", "sport")
+                ? List.of("music", "books", "tech", "gaming", "sport")
                 : aiTags;
 
         return tags.stream()
@@ -546,12 +586,17 @@ public class GiftIdeaService implements IGiftIdeaService {
     }
 
     private void saveCachedRecommendations(Victim victim, List<RecommendationDto> recommendations) {
+        if (recommendations == null || recommendations.isEmpty()) {
+            return;
+        }
+
         try {
             victim.setRecommendationsAnswer(objectMapper.writeValueAsString(recommendations));
             victimRepository.save(victim);
         } catch (Exception e) {
-            victim.setRecommendationsAnswer("");
+            victim.setRecommendationsAnswer(null);
             victimRepository.save(victim);
         }
     }
+
 }
